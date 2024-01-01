@@ -1,0 +1,152 @@
+import json
+import time
+import threading
+import keyboard
+import sys
+import numpy as np
+from mss import mss
+from ctypes import windll
+import pyautogui
+import tkinter as tk
+
+pyautogui.FAILSAFE = False
+
+# Función para salir del programa
+def exiting():
+    print("Exiting...")
+    sys.exit()
+
+# Configuración de DPI para Windows
+windll.shcore.SetProcessDpiAwareness(2)
+WIDTH, HEIGHT = [windll.user32.GetSystemMetrics(0), windll.user32.GetSystemMetrics(1)]
+
+# Definición de la zona de captura
+ZONE = 5
+GRAB_ZONE = (WIDTH // 2 - ZONE, HEIGHT // 2 - ZONE, WIDTH // 2 + ZONE, HEIGHT // 2 + ZONE)
+
+class TriggerBot:
+    def __init__(self):
+        self.sct = mss()
+        self.triggerbot = False
+        self.exit_program = False 
+        self.toggle_lock = threading.Lock()
+        self.load_config()
+       # self.last_color_detection_time = None
+        self.quick_click_interval = 1.0 
+        self.last_color_detection_time = time.time()
+
+    def load_config(self):
+        try:
+            with open('config.json') as json_file:
+                data = json.load(json_file)
+            self.trigger_hotkey = data["trigger_hotkey"]
+            self.always_enabled = data["always_enabled"]
+            self.trigger_delay = data["trigger_delay"]
+            self.base_delay = data["base_delay"]
+            self.color_tolerance = data["color_tolerance"]
+            self.selected_color = (250, 100, 250)  # Configura aquí tu color deseado
+            #self.selected_color = (255, 255, 0)  # Amarillo
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            exiting()
+
+
+
+
+
+    def searcherino(self):
+        while self.triggerbot and not self.exit_program:
+            img = np.array(self.sct.grab(GRAB_ZONE))
+            pixels = img.reshape(-1, 4)
+            color_mask = (
+                (pixels[:, 0] > self.selected_color[0] - self.color_tolerance) &
+                (pixels[:, 0] < self.selected_color[0] + self.color_tolerance) &
+                (pixels[:, 1] > self.selected_color[1] - self.color_tolerance) &
+                (pixels[:, 1] < self.selected_color[1] + self.color_tolerance) &
+                (pixels[:, 2] > self.selected_color[2] - self.color_tolerance) &
+                (pixels[:, 2] < self.selected_color[2] + self.color_tolerance)
+            )
+            # Ahora esta línea no causará un error
+            if np.any(color_mask) and time.time() - self.last_color_detection_time > self.quick_click_interval:
+                self.perform_action()
+            time.sleep(0.01)
+
+
+
+
+    def perform_action(self):
+        burst_duration = 0.3  # Duración de cada ráfaga de disparo
+        burst_pause = 0.2     # Pausa entre ráfagas
+
+        while self.triggerbot and not self.exit_program:
+            if self.check_color_presence():
+                keyboard.press('k')  # Comienza a disparar
+                start_time = time.time()
+
+                # Mantiene presionada la tecla durante la duración de la ráfaga o hasta que el color desaparezca
+                while time.time() - start_time < burst_duration and self.check_color_presence():
+                    time.sleep(0.01)
+
+                keyboard.release('k')  # Detiene el disparo
+
+            self.last_color_detection_time = time.time()
+            time.sleep(burst_pause)  # Espera antes de la siguiente ráfaga
+
+
+    def check_color_presence(self):
+        img = np.array(self.sct.grab(GRAB_ZONE))
+        pixels = img.reshape(-1, 4)
+        color_mask = (
+            (pixels[:, 0] > self.selected_color[0] - self.color_tolerance) &
+            (pixels[:, 0] < self.selected_color[0] + self.color_tolerance) &
+            (pixels[:, 1] > self.selected_color[1] - self.color_tolerance) &
+            (pixels[:, 1] < self.selected_color[1] + self.color_tolerance) &
+            (pixels[:, 2] > self.selected_color[2] - self.color_tolerance) &
+            (pixels[:, 2] < self.selected_color[2] + self.color_tolerance)
+        )
+        return np.any(color_mask)
+
+
+
+
+
+
+
+
+
+    def toggle(self):
+        with self.toggle_lock:
+            self.triggerbot = not self.triggerbot
+            print(f"TriggerBot {'Activated' if self.triggerbot else 'Deactivated'}")
+            windll.kernel32.Beep(440, 75), windll.kernel32.Beep(700, 100) if self.triggerbot else windll.kernel32.Beep(440, 75), windll.kernel32.Beep(200, 100)
+
+    def create_crosshair_overlay(self):
+        self.overlay = tk.Tk()
+        self.overlay.overrideredirect(True)
+        overlay_x = int(WIDTH / 2 - 10)
+        overlay_y = int(HEIGHT / 2 - 10)
+        self.overlay.geometry(f"20x20+{overlay_x}+{overlay_y}")
+        self.overlay.wm_attributes("-topmost", True)
+        self.overlay.wm_attributes("-transparentcolor", "white")
+        canvas = tk.Canvas(self.overlay, width=20, height=20, bg="white")
+        canvas.create_line(10, 0, 10, 20, fill="red")
+        canvas.create_line(0, 10, 20, 10, fill="red")
+        canvas.pack()
+        self.overlay.mainloop()
+
+    def run(self):
+        threading.Thread(target=self.create_crosshair_overlay, daemon=True).start()
+        while not self.exit_program:
+            if self.always_enabled or self.triggerbot:
+                self.searcherino()
+            time.sleep(0.1)
+
+def main():
+    bot = TriggerBot()
+    print("TriggerBot started. Press F10 to toggle, CTRL+SHIFT+X to exit.")
+    keyboard.add_hotkey(bot.trigger_hotkey, bot.toggle)
+    keyboard.add_hotkey("ctrl+shift+x", exiting)
+    bot.run()
+
+if __name__ == "__main__":
+    main()
