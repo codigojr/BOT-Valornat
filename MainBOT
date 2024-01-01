@@ -1,0 +1,179 @@
+import json
+import time
+import threading
+import keyboard
+import sys
+import numpy as np
+from mss import mss
+from ctypes import windll
+import pyautogui
+import random
+import time
+import tkinter as tk
+
+
+
+pyautogui.FAILSAFE = False
+
+# Función para salir del programa
+def exiting():
+    print("Exiting...")
+    sys.exit()
+
+# Configuración de DPI para Windows
+windll.shcore.SetProcessDpiAwareness(2)
+WIDTH, HEIGHT = [windll.user32.GetSystemMetrics(0), windll.user32.GetSystemMetrics(1)]
+
+# Definición de la zona de captura
+ZONE = 5
+GRAB_ZONE = (
+    int(WIDTH / 2 - ZONE),
+    int(HEIGHT / 2 - ZONE),
+    int(WIDTH / 2 + ZONE),
+    int(HEIGHT / 2 + ZONE),
+)
+
+# Clase TriggerBot
+class TriggerBot:
+    def __init__(self):
+        self.sct = mss()
+        self.triggerbot = False
+        self.exit_program = False 
+        self.toggle_lock = threading.Lock()
+        self.load_config()
+        self.first_action = True
+        self.last_color_detection_time = None
+        self.quick_click_interval = 1.0 
+
+    def load_config(self):
+        try:
+            with open('config.json') as json_file:
+                data = json.load(json_file)
+            self.trigger_hotkey = data
+            self.trigger_hotkey = data["trigger_hotkey"]
+            self.always_enabled = data["always_enabled"]
+            self.trigger_delay = data["trigger_delay"]
+            self.base_delay = data["base_delay"]
+            self.color_tolerance = data["color_tolerance"]
+            self.R, self.G, self.B = (250, 100, 250)  # Morado
+            self.R, self.G, self.B = (255, 0, 0)  # Rojo
+            self.R, self.G, self.B = (255, 255, 0)  # Amarillo
+
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            exiting()
+
+    def searcherino(self):
+        if not self.triggerbot:
+            return
+        img = np.array(self.sct.grab(GRAB_ZONE))
+        pixels = img.reshape(-1, 4)
+
+        # Crear máscaras de color según la elección del usuario
+        if self.selected_color == "Rojo":
+            color_mask = self.create_color_mask(pixels, (255, 0, 0))  # Rojo
+        elif self.selected_color == "Morado":
+            color_mask = self.create_color_mask(pixels, (250, 100, 250))  # Morado
+        elif self.selected_color == "Amarillo":
+            color_mask = self.create_color_mask(pixels, (255, 255, 0))  # Amarillo
+        else:
+            print("Color no reconocido, saliendo...")
+            self.exit_program = True
+            return
+
+        # Verificar detección del color seleccionado
+        if np.any(color_mask):
+            self.perform_action(self.selected_color)
+                
+
+    def create_color_mask(self, pixels, color):
+        R, G, B = color
+        return (
+            (pixels[:, 0] > R - self.color_tolerance) & (pixels[:, 0] < R + self.color_tolerance) &
+            (pixels[:, 1] > G - self.color_tolerance) & (pixels[:, 1] < G + self.color_tolerance) &
+            (pixels[:, 2] > B - self.color_tolerance) & (pixels[:, 2] < B + self.color_tolerance)
+        )
+
+
+    def perform_action(self, color_detected):
+        pyautogui.click()
+        keyboard.press_and_release("k")
+        self.last_color_detection_time = time.time()
+
+
+
+    def randomized_click(self):
+            # Retardo aleatorio antes de la acción
+            random_delay = random.uniform(self.base_delay, self.base_delay + self.trigger_delay / 100.0)
+            time.sleep(random_delay)
+
+            # Movimiento aleatorio del mouse y clic
+            try:
+                random_x, random_y = random.randint(100, 200), random.randint(100, 200)
+                pyautogui.moveTo(random_x, random_y, duration=random.uniform(0.1, 0.3))
+                pyautogui.click(duration=random.uniform(0.05, 0.2))
+                keyboard.press_and_release("k")
+            except pyautogui.FailSafeException:
+                print("Fail-safe activado, movimiento del mouse detenido.")
+
+
+
+    def toggle(self):
+        with self.toggle_lock:
+            self.triggerbot = not self.triggerbot
+            print(f"TriggerBot {'Activated' if self.triggerbot else 'Deactivated'}")
+            windll.kernel32.Beep(440, 75), windll.kernel32.Beep(700, 100) if self.triggerbot else windll.kernel32.Beep(440, 75), windll.kernel32.Beep(200, 100)
+
+
+
+    def create_crosshair_overlay(self):
+        self.overlay = tk.Tk()
+        self.overlay.overrideredirect(True)
+        
+        # Tamaño de la mira
+        crosshair_size = 20
+        crosshair_half_size = crosshair_size // 2
+
+        # Calcular la posición correcta para la ventana
+        overlay_x = int(WIDTH / 2 - crosshair_half_size)
+        overlay_y = int(HEIGHT / 2 - crosshair_half_size)
+        
+        self.overlay.geometry(f"{crosshair_size}x{crosshair_size}+{overlay_x}+{overlay_y}")
+        self.overlay.wm_attributes("-topmost", True)
+        self.overlay.wm_attributes("-transparentcolor", "white")
+
+        canvas = tk.Canvas(self.overlay, width=crosshair_size, height=crosshair_size, bg="white")
+        # Asegurarse de que la mira esté centrada en la ventana
+        canvas.create_line(crosshair_half_size, 0, crosshair_half_size, crosshair_size, fill="red")
+        canvas.create_line(0, crosshair_half_size, crosshair_size, crosshair_half_size, fill="red")
+        canvas.pack()
+
+        self.overlay.mainloop()
+
+
+
+
+    def run(self):
+        threading.Thread(target=self.create_crosshair_overlay, daemon=True).start()
+        # Solicitar al usuario que elija un color
+        self.selected_color = input("Elige un color para detectar (Rojo, Morado, Amarillo): ").capitalize()
+        print(f"Detectando color: {self.selected_color}")
+
+        while not self.exit_program:
+            if self.always_enabled or self.triggerbot:
+                self.searcherino()
+            time.sleep(0.1)
+
+
+         
+
+# Función principal
+def main():
+    bot = TriggerBot()
+    print("TriggerBot started. Press F10 to toggle, CTRL+SHIFT+X to exit.")
+    keyboard.add_hotkey(bot.trigger_hotkey, bot.toggle)
+    keyboard.add_hotkey("ctrl+shift+x", exiting)
+    bot.run()
+
+if __name__ == "__main__":
+    main()
